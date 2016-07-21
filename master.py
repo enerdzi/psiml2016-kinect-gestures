@@ -15,13 +15,17 @@ from keras.models import Sequential
 from keras.layers import Dense, Activation, Dropout
 from keras.layers import LSTM
 from keras.optimizers import RMSprop
+from keras.callbacks import Callback
 from keras.utils.data_utils import get_file
+from keras.callbacks import History
 import numpy as np
 import random
 import sys
 
+import matplotlib.pyplot as plt
 import glob
 import os
+
 
 def get_data(labelName, skeletonName) :
     #os.chdir("C:\\Users\\Boris\\Documents\\PSIML\\Projekat\\Latest Inputs")
@@ -39,7 +43,7 @@ def get_data(labelName, skeletonName) :
 #lb, fr = get_data(1,151)
 
 
-def feature_extract(directory):
+def feature_extract(directory, slidingWidth):
     os.chdir(directory)    
     labelFiles = np.empty([0,1], dtype=np.str)
     for file in glob.glob("Labels*.txt"):
@@ -52,9 +56,6 @@ def feature_extract(directory):
     
     #Vectorization
     permutationArray = np.random.permutation(np.asarray(range(len(skeletonFiles))))
-    slidingWidth = 10
-    
-    
     
     #X1 = np.zeros([len(permutationArray), 1 + 2*slidingWidth, 20 * 7], dtype=float)
     
@@ -89,7 +90,9 @@ def feature_extract(directory):
     return X,Y
 
 dir = "C:\\Users\\Boris\\Documents\\PSIML\\Projekat\\Latest Inputs"
-X,Y = feature_extract(dir)
+slidingWidth = 10
+numOfGestures = 3
+X,Y = feature_extract(dir,slidingWidth)
 
 validDir = "C:\\Users\\Boris\\Documents\\PSIML\\Projekat\\Validation Inputs"
 
@@ -101,24 +104,63 @@ Y = Y[0:len(Y)-20*140]
 
 print(len(X))
 
-# build the model: 2 stacked LSTM
+# build the model: 1 stacked LSTM
 print('Build model...')
 model = Sequential()
-model.add(LSTM(128, input_shape=(21, 20*7)))
-model.add(Dense(3))
+#model.add(LSTM(128, activation='relu', input_shape=(21, 20*7)))
+model.add(LSTM(128, input_shape=(2*slidingWidth + 1, 20*7)))
+model.add(Dense(numOfGestures))
 model.add(Activation('softmax'))
 
-optimizer = RMSprop(lr=0.01)
-model.compile(loss='categorical_crossentropy', optimizer=optimizer)
+#optimizer = RMSprop(lr=0.01)
+model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
 
-for iteration in range(1, 10):
-    print()
-    print('-' * 50)
-    print('Iteration', iteration)
-    model.fit(X, Y, batch_size=32, nb_epoch=1)
+#for iteration in range(1):
+print()
+print('-' * 50)
+#print('Iteration', iteration)
+history = History()
+model.fit(X, Y, batch_size=32, nb_epoch=1,  show_accuracy=True, validation_data=(X_valid, Y_valid), callbacks=[history])
+loss_and_metrics = model.evaluate(X_valid, Y_valid, batch_size=32)
 
-    score, acc = model.evaluate(X, Y, batch_size=32)
-    print('Test score:', score)
-    print('Test accuracy:', acc)
-
+json_string = model.to_json()
     
+#Prediction:
+predict = np.zeros([len(X_valid), numOfGestures], dtype = float)
+predictionInput = np.zeros([1,2*slidingWidth + 1, 20*7], dtype = float)
+for i in range(len(X_valid)):    
+    predictionInput[0] = X_valid[i]    
+    predict[i] = model.predict(predictionInput, verbose=0)[0]
+
+            
+confusionMatrix = np.zeros([numOfGestures, numOfGestures], dtype = float)
+
+trsh = 0.5
+finalPredictions = np.zeros([len(X_valid), numOfGestures], dtype = float)
+for i in range(len(predict)):
+    for j in range(numOfGestures):
+        if (predict[i,j] > trsh):
+            finalPredictions[i,j] = 1
+    if (max(finalPredictions[i] < 1)):
+        finalPredictions[i, 0] = 1
+    cm_pred = np.nonzero(predict[i])[0][0]
+    cm_lab = np.nonzero(Y_valid[i])[0][0]
+    confusionMatrix[cm_pred, cm_lab] += 1
+    
+#confusionMatrix/=len(predict)
+    
+plt.plot(history.history['acc'])
+plt.plot(history.history['val_acc'])
+plt.title('model accuracy')
+plt.ylabel('accuracy')
+plt.xlabel('epoch')
+plt.legend(['train', 'test'], loc='upper left')
+plt.show()
+# summarize history for loss
+plt.plot(history.history['loss'])
+plt.plot(history.history['val_loss'])
+plt.title('model loss')
+plt.ylabel('loss')
+plt.xlabel('epoch')
+plt.legend(['train', 'test'], loc='upper left')
+plt.show()
